@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Разметка доски</title>
+  <link rel="stylesheet" href="popup.css">
+  <script src="popup.js" defer></script>
+</head>
+<body>
+  <main>
+    <h1>Разметка доски</h1>
+
+    <form id="annotation-form">
+      <fieldset class="tools" aria-describedby="board-instructions">
+        <legend class="sr-only">Инструмент</legend>
+        <div class="tool">
+          <input id="arrow-tool" type="radio" name="shape" value="arrow" checked>
+          <label for="arrow-tool"><span aria-hidden="true">↗</span>Стрелка</label>
+        </div>
+        <div class="tool">
+          <input id="rectangle-tool" type="radio" name="shape" value="rectangle">
+          <label for="rectangle-tool"><span aria-hidden="true">▣</span>Клетка</label>
+        </div>
+        <div class="tool">
+          <input id="text-tool" type="radio" name="shape" value="text">
+          <label for="text-tool"><span aria-hidden="true">А</span>Текст</label>
+        </div>
+      </fieldset>
+
+      <div class="options">
+        <div class="color-field">
+          <label for="mark-color">Цвет</label>
+          <input id="mark-color" type="color" value="#3cb371">
+        </div>
+        <div id="text-field" class="text-field" hidden>
+          <label for="mark-text">Текст метки</label>
+          <input id="mark-text" type="text" maxlength="24" autocomplete="off" disabled>
+        </div>
+      </div>
+
+      <p id="board-instructions" class="hint">Укажите начало и конец стрелки на доске. Клавиша Esc отменяет выбор.</p>
+      <button id="start" class="primary" type="submit" disabled>Выбрать клетки</button>
+    </form>
+
+    <div class="actions" aria-label="Действия с метками" role="group">
+      <button id="undo" type="button" disabled>Отменить последнюю</button>
+      <button id="clear" type="button" disabled>Очистить</button>
+    </div>
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+  </main>
+</body>
+</html>
