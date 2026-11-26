@@ -19,6 +19,25 @@
     let currentPath = '';
     let selection = null;
     const marks = [];
+    const engine = {
+        enabled: false,
+        state: 'idle',
+        fen: null,
+        generation: 0,
+        requested: false,
+        timer: null,
+        moves: [],
+        elements: []
+    };
+    const suggestionColors = ['#32c977', '#48a7ff', '#ffba49'];
+    const rankPositions = [[-.66, .58], [.62, .58], [.62, -.55]];
+    const promotions = { q: 'Ф', r: 'Л', b: 'С', n: 'К' };
+
+    function isAnalysisPage() {
+        if (host === 'lichess.org') return /^\/analysis(?:\/|$)/.test(location.pathname);
+        return ['chess.com', 'www.chess.com'].includes(host)
+            && /^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?analysis(?:\/|$)/i.test(location.pathname);
+    }
 
     function hasBoardSize(rect) {
         return rect.width >= 120 && rect.height >= 120
@@ -57,6 +76,7 @@
         drawer?.terminate();
         drawer = null;
         marks.length = 0;
+        engine.elements.length = 0;
     }
 
     function synchronizeBoard() {
@@ -121,9 +141,152 @@
         selection = null;
     }
 
+    function releaseEmptyDrawer() {
+        if (!selection && marks.length === 0 && engine.elements.length === 0) closeDrawer();
+    }
+
     function cancelSelection() {
         stopSelection();
-        if (marks.length === 0) closeDrawer();
+        releaseEmptyDrawer();
+    }
+
+    function removeShapes(elements) {
+        if (!drawer || elements.length === 0) return;
+        const removed = new Set(elements);
+        for (const element of elements) element.remove();
+        drawer.addedShapes = drawer.addedShapes.filter(({ element }) => !removed.has(element));
+    }
+
+    function readPosition() {
+        let fen = null;
+        const read = event => {
+            if (typeof event.detail === 'string' && event.detail.length <= 120) {
+                fen = event.detail.trim();
+            }
+        };
+        window.addEventListener('chess-board-notes:position', read, { once: true });
+        window.dispatchEvent(new Event('chess-board-notes:read-position'));
+        window.removeEventListener('chess-board-notes:position', read);
+        return fen || null;
+    }
+
+    function resetEnginePosition(state, fen = null) {
+        engine.generation++;
+        engine.fen = fen;
+        engine.state = state;
+        engine.requested = false;
+        engine.moves = [];
+        removeShapes(engine.elements.splice(0));
+        releaseEmptyDrawer();
+    }
+
+    function engineStatus() {
+        return {
+            engineAvailable: isAnalysisPage(),
+            engineEnabled: engine.enabled,
+            engineState: engine.state,
+            engineCount: engine.moves.length
+        };
+    }
+
+    function showSuggestions(board) {
+        setUpDrawer(board);
+        drawer.updateDimensions();
+
+        for (const [index, move] of engine.moves.entries()) {
+            const from = move.slice(0, 2);
+            const to = move.slice(2, 4);
+            const color = suggestionColors[index];
+            const rank = String(index + 1);
+            const arrow = drawer.createShape('arrow', [from, to], {
+                lineWidth: 13,
+                arrowheadWidth: 39,
+                arrowheadHeight: 33,
+                style: 'fill: ' + color + '; opacity: .78'
+            });
+            const label = drawer.createShape('text', to, {
+                text: rank + (promotions[move[4]] ?? ''),
+                size: 1.35,
+                position: rankPositions[index],
+                style: 'fill: ' + color + '; stroke: #17211b; stroke-width: .17em; paint-order: stroke; font-weight: 800'
+            });
+            for (const element of [arrow, label]) {
+                if (!element) continue;
+                element.setAttribute('data-chess-board-notes-suggestion', rank);
+                engine.elements.push(element);
+            }
+        }
+    }
+
+    async function analyzePosition(fen, generation) {
+        let result;
+        try {
+            result = await chrome.runtime.sendMessage({ type: 'board-notes:analyze', fen });
+        } catch {
+            result = null;
+        }
+
+        if (!engine.enabled || generation !== engine.generation) return;
+        if (!isAnalysisPage()) {
+            setEngineEnabled(false);
+            return;
+        }
+
+        const board = synchronizeBoard() || findBoard();
+        if (!board || readPosition() !== fen) {
+            resetEnginePosition('waiting');
+            return;
+        }
+
+        if (result?.reason === 'busy') {
+            engine.requested = false;
+            return;
+        }
+
+        if (!result?.ok || !Array.isArray(result.moves)) {
+            engine.state = 'error';
+            return;
+        }
+
+        engine.moves = [...new Set(result.moves.filter(
+            move => typeof move === 'string' && /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(move)
+                && move.slice(0, 2) !== move.slice(2, 4)
+        ))].slice(0, 3);
+        engine.state = engine.moves.length ? 'ready' : 'no-moves';
+        if (engine.moves.length) showSuggestions(board);
+    }
+
+    function updateEngine() {
+        if (!isAnalysisPage()) {
+            setEngineEnabled(false);
+            return;
+        }
+
+        const board = synchronizeBoard() || findBoard();
+        const fen = board ? readPosition() : null;
+        if (fen !== engine.fen) {
+            resetEnginePosition(fen ? 'thinking' : 'waiting', fen);
+            return;
+        }
+
+        if (engine.state === 'thinking' && !engine.requested) {
+            engine.requested = true;
+            void analyzePosition(fen, engine.generation);
+        } else if (board && engine.state === 'ready' && engine.elements.length === 0) {
+            showSuggestions(board);
+        }
+    }
+
+    function setEngineEnabled(enabled) {
+        if (enabled === engine.enabled) return;
+        engine.enabled = enabled;
+        clearInterval(engine.timer);
+        engine.timer = null;
+        resetEnginePosition(enabled ? 'waiting' : 'idle');
+        if (enabled) {
+            engine.timer = setInterval(updateEngine, 280);
+            updateEngine();
+        }
     }
 
     function drawStartSquare() {
@@ -235,7 +398,24 @@
         const type = message?.type;
         if (type === 'board-notes:status') {
             const board = synchronizeBoard() || findBoard();
-            reply({ ok: true, hasBoard: !!board, count: marks.length, mode: selection?.shape ?? null });
+            reply({
+                ok: true,
+                hasBoard: !!board,
+                count: marks.length,
+                mode: selection?.shape ?? null,
+                ...engineStatus()
+            });
+        } else if (type === 'board-notes:engine') {
+            if (typeof message.enabled !== 'boolean' || (message.enabled && !isAnalysisPage())) {
+                reply({ ok: false, reason: 'unavailable' });
+                return;
+            }
+            if (message.enabled && !(synchronizeBoard() || findBoard())) {
+                reply({ ok: false, reason: 'no-board' });
+                return;
+            }
+            setEngineEnabled(message.enabled);
+            reply({ ok: true, ...engineStatus() });
         } else if (type === 'board-notes:start') {
             const board = synchronizeBoard() || findBoard();
             if (!board) {
@@ -257,15 +437,12 @@
         } else if (type === 'board-notes:clear' || type === 'board-notes:undo') {
             synchronizeBoard();
             if (type === 'board-notes:clear') {
-                closeDrawer();
+                removeShapes(marks.splice(0).map(({ element }) => element));
             } else {
-                const last = marks.pop()?.element;
-                last?.remove();
-                if (drawer && last) {
-                    drawer.addedShapes = drawer.addedShapes.filter(({ element }) => element !== last);
-                }
-                cancelSelection();
+                const last = marks.pop();
+                if (last) removeShapes([last.element]);
             }
+            cancelSelection();
             reply({ ok: true, count: marks.length });
         }
     });

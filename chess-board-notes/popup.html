@@ -48,6 +48,15 @@
       <button id="clear" type="button" disabled>Очистить</button>
     </div>
     <p id="status" class="status" role="status" aria-live="polite"></p>
+
+    <section class="engine-panel" aria-labelledby="engine-title">
+      <div class="engine-copy">
+        <h2 id="engine-title">Подсказки Stockfish</h2>
+        <p id="engine-status" role="status" aria-live="polite">Проверяем страницу…</p>
+      </div>
+      <button id="engine-toggle" class="engine-toggle" type="button" role="switch"
+        aria-checked="false" aria-labelledby="engine-title" aria-describedby="engine-status" disabled></button>
+    </section>
   </main>
 </body>
 </html>
